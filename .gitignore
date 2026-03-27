@@ -1,0 +1,19 @@
+# Environments
+venv/
+env/
+__pycache__/
+*.pyc
+
+# IDEs
+.vscode/
+.idea/
+
+# Checkpoints and Data (Never push these!)
+*.pth
+*.pt
+/data/
+/dataset/
+*.zip
+
+# OS Files
+.DS_Store
