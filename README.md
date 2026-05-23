@@ -5,7 +5,7 @@
 ![CUDA](https://img.shields.io/badge/CUDA-76B900?style=for-the-badge&logo=nvidia&logoColor=white)
 ![Computer Vision](https://img.shields.io/badge/Computer_Vision-Object_Detection-blue?style=for-the-badge)
 
-A production-grade **Semi-Supervised Object Detection** system built on a lightweight FCOS+ ResNet-50 student trained via teacher–student distillation. Achieves **49.54% mAP@0.50** on COCO 2017 with real-time inference at **30+ FPS on NVIDIA T4**, trained across **230,000+ images** without a single CUDA OOM crash.
+A production-grade **Cross-Architecture Knowledge Distillation** framework for Semi-Supervised Object Detection. A heavyweight Deformable DETR Oracle transfers spatial reasoning to a lightweight FCOS+ ResNet-50 student via a custom dual-stream pipeline — achieving **49.54% mAP@0.50** on COCO 2017, real-time at **30+ FPS on NVIDIA T4**, trained across **230,000+ image passes per epoch** without a single CUDA OOM crash across **400+ hours of continuous GPU compute**.
 
 ---
 
@@ -29,8 +29,9 @@ A production-grade **Semi-Supervised Object Detection** system built on a lightw
 | **NVIDIA T4 (Cloud GPU)** | 20–30 ms | 30+ FPS ✅ Real-Time |
 | **Apple Silicon (M-Series)** | 70–100 ms | 10–15 FPS |
 | **Standard CPU (Intel/AMD)** | 300–500 ms | 2–5 FPS (Viable Offline) |
+| **Standard Hardware (Baseline)** | — | **9.71 FPS** (edge deployment target) |
 
-> Latency covers the full forward-pass regression, bypassing the overhead of two-stage models like Faster R-CNN.
+> Latency covers the full forward-pass regression, bypassing the overhead of traditional two-stage models like Faster R-CNN.
 
 ---
 
@@ -38,20 +39,52 @@ A production-grade **Semi-Supervised Object Detection** system built on a lightw
 
 | Stream | Size | Purpose |
 |:---|:---|:---|
-| **Labeled Anchor Stream** | 117,266 images | Human-annotated COCO ground truth — prevents hallucination |
+| **Labeled Anchor Stream** | 117,266 unique images | Human-annotated COCO 2017 ground truth — prevents hallucination |
 | **Unlabeled Oracle Stream** | 112,987 images | Teacher-generated pseudo-labels — transfers spatial reasoning |
-| **Blind Validation Set** | 5,000 images | Held-out exclusively for mAP evaluation |
-| **Total Pipeline Scale** | **230,000+ environments/epoch** | Orchestrated without hardware failure |
+| **Dual-Stream Oversampling** | ~236,574 passes/epoch | 1:1 mixing ratio (μ = 0.5) forces equal exposure across 56,494 batches |
+| **Blind Validation Set** | 5,000 images | Held-out exclusively for TorchMetrics mAP evaluation |
+| **Total GPU Compute** | **400+ hours** | Continuous NVIDIA T4 — zero OOM crashes |
+
+---
+
+## 🔬 Experimental Scope
+
+9 primary experimental pipelines executed across 400+ hours of cloud GPU compute:
+
+### Data Scarcity Validation (3 runs)
+Benchmarked the framework's label efficiency under extreme annotation budgets:
+
+| Split | Labeled Data | Purpose |
+|:---|:---|:---|
+| 1% split | ~1,173 images | Minimum viable label scenario |
+| 5% split | ~5,863 images | Low-resource deployment simulation |
+| 10% split | ~11,727 images | Practical semi-supervised baseline |
+
+### Architectural Ablation Studies (6 runs)
+Executed on 30–50% fractional proxy datasets to optimize compute budgets. Parameters tested:
+
+| Parameter | Values Tested |
+|:---|:---|
+| **NMS Threshold** | Multiple configurations |
+| **Input Resolution** | 800px vs 320px Pareto frontier |
+| **Pseudo-label Mixing Ratio** | 1:0 · 1:2 · 1:4 |
+| **SAGc Confidence Gate** | Dynamic threshold tuning |
 
 ---
 
 ## 🚀 Key Engineering Features
 
+**Cross-Architecture Knowledge Distillation**
+Teacher: high-capacity Deformable DETR Oracle. Student: lightweight anchor-free FCOS+ with ResNet-50 backbone. The student absorbs the teacher's spatial reasoning via pseudo-labels while remaining grounded by human-annotated ground truth in every batch.
+
 **Dual-Stream Distillation Engine**
-A custom `DataLoader` that simultaneously processes human-verified ground-truth and synthetic Oracle pseudo-labels in the same batch, preventing the student model from hallucinating on unlabeled data alone.
+A custom PyTorch `DataLoader` with a 1:1 mixing ratio (μ = 0.5) that oversamples human-annotated data to match pseudo-labeled data — forcing ~236,574 image passes per epoch across 56,494 discrete batches. Prevents the student from hallucinating on pseudo-labels alone.
+
+**Soft Adaptive Confidence Gate (SAGc)**
+A custom-designed confidence filtering mechanism that dynamically suppresses noisy pseudo-labels during training, actively preventing confirmation bias and model drift — with **zero computational overhead at inference time**.
 
 **Hardware-Resilient Training Loop**
-Engineered for stability on constrained cloud hardware (T4 GPUs):
+Engineered for uninterrupted stability on constrained cloud hardware (T4 GPUs):
 - *Active NaN-Blocker* — detects `inf`/`NaN` loss spikes and safely purges the computational graph before weights are corrupted
 - *Unified Backward Pass* — optimizes gradient accumulation and dynamically flushes dead VRAM caches to prevent fragmentation and OOM crashes
 
@@ -59,29 +92,33 @@ Engineered for stability on constrained cloud hardware (T4 GPUs):
 Built-in asynchronous CUDA timing and CPU performance counters measure exact FPS and millisecond latency across NVIDIA GPUs, Apple Silicon, and standard CPUs.
 
 **Automated Cloud Recovery**
-Epoch and batch-level checkpointing ensures the full training pipeline resumes seamlessly after cloud disconnections or preemptions.
+Epoch and batch-level checkpointing ensures seamless pipeline resumption after cloud disconnections or preemptions.
 
 ---
 
 ## 🏗️ System Architecture
 
 ```
-COCO 2017 Dataset
+COCO 2017 Dataset (118,287 unique training images)
       │
-      ├── Labeled Stream (117K)──────────────┐
-      │                                      │
-      └── Unlabeled Stream (113K)            │
-                │                            │
-                ▼                            │
-        Teacher Model (DETR)                 │
-        pseudo-label generation              │
-                │                            │
-                ▼                            ▼
+      ├── Labeled Stream (117K) ──────────────────┐
+      │                                           │
+      └── Unlabeled Stream (113K)                 │
+                │                                 │
+                ▼                                 │
+        Teacher Model (Deformable DETR)           │
+        pseudo-label generation                   │
+                │                                 │
+                ▼                                 ▼
          Dual-Stream DataLoader
-         (ground truth + pseudo-labels in same batch)
+         (μ = 0.5 mixing ratio · 236,574 passes/epoch)
                 │
                 ▼
-        Student Model (FCOS+ ResNet-50)
+        Soft Adaptive Confidence Gate (SAGc)
+        (dynamic pseudo-label filtering)
+                │
+                ▼
+        Student Model (FCOS+ · ResNet-50 · Anchor-free)
         + Active NaN-Blocker
         + Unified Backward Pass
         + VRAM Cache Management
@@ -92,7 +129,7 @@ COCO 2017 Dataset
                 │
                 ▼
         OUTPUT: Edge-Optimized Detector
-        49.54% mAP@0.50 · 30+ FPS on T4
+        49.54% mAP@0.50 · 9.71 FPS (standard HW) · 30+ FPS (T4)
 ```
 
 ---
@@ -124,11 +161,11 @@ Dsl-object-detection/
 
 | File | Description |
 |------|-------------|
-| `dual_dataset.py` | Custom SSOD Dual-Stream DataLoader |
-| `student_fcos.py` | Lightweight ResNet-50 FCOS+ architecture |
-| `teacher_detr.py` | Oracle/Teacher DETR architecture |
+| `dual_dataset.py` | Custom SSOD Dual-Stream DataLoader (μ = 0.5 mixing ratio) |
+| `student_fcos.py` | Lightweight anchor-free FCOS+ with ResNet-50 backbone |
+| `teacher_detr.py` | Deformable DETR Oracle/Teacher architecture |
 | `checkpoint.py` | Cloud-saving and crash recovery logic |
-| `train_student.py` | Hardware-resilient student training loop |
+| `train_student.py` | Hardware-resilient student training loop with SAGc + NaN-Blocker |
 | `train_oracle.py` | Teacher model training loop |
 | `generate_pseudo_labels.py` | Oracle synthetic data generation |
 | `evaluate_student.py` | TorchMetrics mAP evaluation engine |
@@ -139,12 +176,12 @@ Dsl-object-detection/
 ## ⚙️ Setup
 
 ```bash
-git clone https://github.com/your-username/Dsl-object-detection.git
-cd Dsl-object-detection
+git clone https://github.com/Haseeb-Sultan-NU/Lightweight-FCOS-via-Teacher-Student-Semi-Supervised-Object-Detection.git
+cd Lightweight-FCOS-via-Teacher-Student-Semi-Supervised-Object-Detection
 pip install -r requirements.txt
 ```
 
-Configure your dataset path and hyperparameters in `configs/`.
+Configure dataset path and hyperparameters in `configs/`.
 
 ---
 
@@ -169,3 +206,9 @@ python src/train_student.py
 ```bash
 python src/evaluate_student.py
 ```
+
+---
+
+## 📄 License
+
+MIT
